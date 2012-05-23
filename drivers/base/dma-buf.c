@@ -426,6 +426,7 @@ void dma_buf_kunmap(struct dma_buf *dmabuf, unsigned long page_num,
 }
 EXPORT_SYMBOL_GPL(dma_buf_kunmap);
 
+
 /**
  * dma_buf_mmap - Setup up a userspace mmap with the given vma
  * @dmabuf:	[in]	buffer that should back the vma
@@ -469,7 +470,8 @@ int dma_buf_mmap(struct dma_buf *dmabuf, struct vm_area_struct *vma,
 EXPORT_SYMBOL_GPL(dma_buf_mmap);
 
 /**
- * dma_buf_vmap - Create virtual mapping for the buffer object into kernel address space. The same restrictions as for vmap and friends apply.
+ * dma_buf_vmap - Create virtual mapping for the buffer object into kernel
+ * address space. Same restrictions as for vmap and friends apply.
  * @dmabuf:	[in]	buffer to vmap
  *
  * This call may fail due to lack of virtual mapping address space.
@@ -479,7 +481,8 @@ EXPORT_SYMBOL_GPL(dma_buf_mmap);
  */
 void *dma_buf_vmap(struct dma_buf *dmabuf)
 {
-	WARN_ON(!dmabuf);
+	if (WARN_ON(!dmabuf))
+		return NULL;
 
 	if (dmabuf->ops->vmap)
 		return dmabuf->ops->vmap(dmabuf);
@@ -489,11 +492,12 @@ EXPORT_SYMBOL_GPL(dma_buf_vmap);
 
 /**
  * dma_buf_vunmap - Unmap a vmap obtained by dma_buf_vmap.
- * @dmabuf:	[in]	buffer to vmap
+ * @dmabuf:	[in]	buffer to vunmap
  */
 void dma_buf_vunmap(struct dma_buf *dmabuf, void *vaddr)
 {
-	WARN_ON(!dmabuf);
+	if (WARN_ON(!dmabuf))
+		return;
 
 	if (dmabuf->ops->vunmap)
 		dmabuf->ops->vunmap(dmabuf, vaddr);
