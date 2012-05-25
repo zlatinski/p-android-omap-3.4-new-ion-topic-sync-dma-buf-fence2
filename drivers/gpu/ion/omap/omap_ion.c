@@ -149,6 +149,17 @@ static int omap_ion_remove(struct platform_device *pdev)
 	return 0;
 }
 
+static void (*export_fd_to_ion_handles)(int fd,
+		struct ion_client **client,
+		struct ion_handle **handles,
+		int *num_handles);
+
+static void omap_ion_register_pvr_export(void *pvr_export_fd)
+{
+	export_fd_to_ion_handles = pvr_export_fd;
+}
+EXPORT_SYMBOL(omap_ion_register_pvr_export);
+
 static struct platform_driver ion_driver = {
 	.probe = omap_ion_probe,
 	.remove = omap_ion_remove,
