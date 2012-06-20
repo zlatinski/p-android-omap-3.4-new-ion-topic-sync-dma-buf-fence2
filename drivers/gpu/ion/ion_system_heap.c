@@ -216,7 +216,7 @@ err:
 	return -ENOMEM;
 }
 
-void ion_system_heap_free(struct ion_buffer *buffer)
+static void ion_system_heap_free(struct ion_buffer *buffer)
 {
 	struct ion_heap *heap = buffer->heap;
 	struct ion_system_heap *sys_heap = container_of(heap,
@@ -233,19 +233,19 @@ void ion_system_heap_free(struct ion_buffer *buffer)
 	kfree(table);
 }
 
-struct sg_table *ion_system_heap_map_dma(struct ion_heap *heap,
+static struct sg_table *ion_system_heap_map_dma(struct ion_heap *heap,
 					 struct ion_buffer *buffer)
 {
 	return buffer->priv_virt;
 }
 
-void ion_system_heap_unmap_dma(struct ion_heap *heap,
+static void ion_system_heap_unmap_dma(struct ion_heap *heap,
 			       struct ion_buffer *buffer)
 {
 	return;
 }
 
-void *ion_system_heap_map_kernel(struct ion_heap *heap,
+static void *ion_system_heap_map_kernel(struct ion_heap *heap,
 				 struct ion_buffer *buffer)
 {
 	struct scatterlist *sg;
@@ -279,14 +279,14 @@ void *ion_system_heap_map_kernel(struct ion_heap *heap,
 	return vaddr;
 }
 
-void ion_system_heap_unmap_kernel(struct ion_heap *heap,
+static void ion_system_heap_unmap_kernel(struct ion_heap *heap,
 				  struct ion_buffer *buffer)
 {
 	vunmap(buffer->vaddr);
 }
 
-int ion_system_heap_map_user(struct ion_heap *heap, struct ion_buffer *buffer,
-			     struct vm_area_struct *vma)
+static int ion_system_heap_map_user(struct ion_heap *heap,
+		struct ion_buffer *buffer, struct vm_area_struct *vma)
 {
 	struct sg_table *table = buffer->priv_virt;
 	unsigned long addr = vma->vm_start;
@@ -400,7 +400,7 @@ static int ion_system_contig_heap_allocate(struct ion_heap *heap,
 	return 0;
 }
 
-void ion_system_contig_heap_free(struct ion_buffer *buffer)
+static void ion_system_contig_heap_free(struct ion_buffer *buffer)
 {
 	kfree(buffer->priv_virt);
 }
@@ -414,8 +414,8 @@ static int ion_system_contig_heap_phys(struct ion_heap *heap,
 	return 0;
 }
 
-struct sg_table *ion_system_contig_heap_map_dma(struct ion_heap *heap,
-						struct ion_buffer *buffer)
+static struct sg_table *ion_system_contig_heap_map_dma(struct ion_heap *heap,
+						   struct ion_buffer *buffer)
 {
 	struct sg_table *table;
 	int ret;
@@ -433,14 +433,14 @@ struct sg_table *ion_system_contig_heap_map_dma(struct ion_heap *heap,
 	return table;
 }
 
-void ion_system_contig_heap_unmap_dma(struct ion_heap *heap,
+static void ion_system_contig_heap_unmap_dma(struct ion_heap *heap,
 				      struct ion_buffer *buffer)
 {
 	sg_free_table(buffer->sg_table);
 	kfree(buffer->sg_table);
 }
 
-int ion_system_contig_heap_map_user(struct ion_heap *heap,
+static int ion_system_contig_heap_map_user(struct ion_heap *heap,
 				    struct ion_buffer *buffer,
 				    struct vm_area_struct *vma)
 {
