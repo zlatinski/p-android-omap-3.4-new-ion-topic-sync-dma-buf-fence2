@@ -85,6 +85,45 @@ static void ion_carveout_heap_free(struct ion_buffer *buffer)
 	buffer->priv_phys = ION_CARVEOUT_ALLOCATE_FAIL;
 }
 
+static struct sg_table *ion_carveout_heap_map_dma(struct ion_heap *heap,
+					      struct ion_buffer *buffer)
+{
+	struct sg_table *table;
+	struct scatterlist *sg;
+	int ret;
+	int i;
+	int n_pages = PAGE_ALIGN(buffer->size) / PAGE_SIZE;
+	unsigned char *addr = phys_to_virt(buffer->priv_phys);
+
+	table = kzalloc(sizeof(struct sg_table), GFP_KERNEL);
+	if (!table)
+		return ERR_PTR(-ENOMEM);
+
+	ret = sg_alloc_table(table, n_pages, GFP_KERNEL);
+	if (ret) {
+		kfree(table);
+		return ERR_PTR(ret);
+	}
+
+	sg = table->sgl;
+	for (i = 0; i < n_pages; i++) {
+		sg_set_page(sg, virt_to_page(addr), PAGE_SIZE, 0);
+		addr += PAGE_SIZE;
+	}
+
+	return table;
+}
+
+static void ion_carveout_heap_unmap_dma(struct ion_heap *heap,
+				 struct ion_buffer *buffer)
+{
+	if (buffer->sg_table) {
+		sg_free_table(buffer->sg_table);
+		kfree(buffer->sg_table);
+	}
+	return;
+}
+
 static void __iomem *ion_carveout_heap_map_kernel(struct ion_heap *heap,
 				   struct ion_buffer *buffer)
 {
@@ -167,6 +206,8 @@ static struct ion_heap_ops carveout_heap_ops = {
 	.unmap_kernel = ion_carveout_heap_unmap_kernel,
 	.flush_user = ion_carveout_heap_flush_user,
 	.inval_user = ion_carveout_heap_inval_user,
+	.map_dma = ion_carveout_heap_map_dma,
+	.unmap_dma = ion_carveout_heap_unmap_dma,
 };
 
 struct ion_heap *ion_carveout_heap_create(struct ion_platform_heap *heap_data)
