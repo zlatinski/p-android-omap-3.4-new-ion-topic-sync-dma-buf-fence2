@@ -24,6 +24,7 @@
 #include <linux/slab.h>
 #include <linux/export.h>
 #include <linux/fence.h>
+#include <linux/seqno-fence.h>
 
 int __fence_signal(struct fence *fence)
 {
@@ -283,3 +284,38 @@ out:
 	return ret;
 }
 EXPORT_SYMBOL(fence_default_wait);
+
+static bool seqno_enable_signaling(struct fence *fence)
+{
+	struct seqno_fence *seqno_fence = to_seqno_fence(fence);
+	return seqno_fence->ops->enable_signaling(fence);
+}
+
+static bool seqno_signaled(struct fence *fence)
+{
+	struct seqno_fence *seqno_fence = to_seqno_fence(fence);
+	return seqno_fence->ops->signaled && seqno_fence->ops->signaled(fence);
+}
+
+static void seqno_release(struct fence *fence)
+{
+	struct seqno_fence *f = to_seqno_fence(fence);
+
+	if (f->ops->release)
+		f->ops->release(fence);
+	dma_buf_put(f->sync_buf);
+}
+
+static long seqno_wait(struct fence *fence, bool intr, signed long timeout)
+{
+	struct seqno_fence *f = to_seqno_fence(fence);
+	return f->ops->wait(fence, intr, timeout);
+}
+
+const struct fence_ops seqno_fence_ops = {
+	.enable_signaling = seqno_enable_signaling,
+	.signaled = seqno_signaled,
+	.wait = seqno_wait,
+	.release = seqno_release
+};
+EXPORT_SYMBOL_GPL(seqno_fence_ops);
