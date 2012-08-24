@@ -113,6 +113,7 @@ struct dma_buf_ops {
  * @attachments: list of dma_buf_attachment that denotes all devices attached.
  * @ops: dma_buf_ops associated with this buffer object.
  * @priv: exporter specific private data for this buffer object.
+ * @resv: reservation object linked to this dma-buf
  */
 struct dma_buf {
 	size_t size;
@@ -122,6 +123,7 @@ struct dma_buf {
 	/* mutex to serialize list manipulation and attach/detach */
 	struct mutex lock;
 	void *priv;
+	struct reservation_object *resv;
 };
 
 /**
@@ -161,7 +163,8 @@ struct dma_buf_attachment *dma_buf_attach(struct dma_buf *dmabuf,
 void dma_buf_detach(struct dma_buf *dmabuf,
 				struct dma_buf_attachment *dmabuf_attach);
 struct dma_buf *dma_buf_export(void *priv, const struct dma_buf_ops *ops,
-			       size_t size, int flags);
+			       size_t size, int flags,
+			       struct reservation_object *);
 int dma_buf_fd(struct dma_buf *dmabuf, int flags);
 struct dma_buf *dma_buf_get(int fd);
 void dma_buf_put(struct dma_buf *dmabuf);
