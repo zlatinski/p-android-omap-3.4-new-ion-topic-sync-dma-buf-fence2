@@ -41,6 +41,18 @@
 atomic64_t reservation_counter = ATOMIC64_INIT(1);
 EXPORT_SYMBOL(reservation_counter);
 
+const char reservation_object_name[] = "reservation_object";
+EXPORT_SYMBOL(reservation_object_name);
+
+const char reservation_ticket_name[] = "reservation_ticket";
+EXPORT_SYMBOL(reservation_ticket_name);
+
+struct lock_class_key reservation_object_class;
+EXPORT_SYMBOL(reservation_object_class);
+
+struct lock_class_key reservation_ticket_class;
+EXPORT_SYMBOL(reservation_ticket_class);
+
 int
 object_reserve(struct reservation_object *obj, bool intr, bool no_wait,
 	       reservation_ticket_t *ticket)
@@ -48,6 +60,10 @@ object_reserve(struct reservation_object *obj, bool intr, bool no_wait,
 	int ret;
 	u64 sequence = ticket ? ticket->seqno : 1;
 	u64 oldseq;
+
+	if (!no_wait)
+		mutex_acquire_nest(&obj->dep_map, 0, 0,
+				   ticket ? &ticket->dep_map : NULL, _RET_IP_);
 
 	while (unlikely(oldseq = atomic64_cmpxchg(&obj->reserved, 0, sequence))) {
 
@@ -58,14 +74,18 @@ object_reserve(struct reservation_object *obj, bool intr, bool no_wait,
 			/**
 			 * We've already reserved this one.
 			 */
-			if (unlikely(sequence == oldseq))
-				return -EDEADLK;
+			if (unlikely(sequence == oldseq)) {
+				ret = -EDEADLK;
+				goto fail;
+			}
 			/**
 			 * Already reserved by a thread that will not back
 			 * off for us. We need to back off.
 			 */
-			if (unlikely(sequence - oldseq < (1ULL << 63)))
-				return -EAGAIN;
+			if (unlikely(sequence - oldseq < (1ULL << 63))) {
+				ret = -EAGAIN;
+				goto fail;
+			}
 		}
 
 		if (no_wait)
@@ -74,8 +94,12 @@ object_reserve(struct reservation_object *obj, bool intr, bool no_wait,
 		ret = object_wait_unreserved(obj, intr);
 
 		if (unlikely(ret))
-			return ret;
+			goto fail;
 	}
+
+	if (no_wait)
+		mutex_acquire_nest(&obj->dep_map, 0, 1,
+				   ticket ? &ticket->dep_map : NULL, _RET_IP_);
 
 	/**
 	 * Wake up waiters that may need to recheck for deadlock,
@@ -84,6 +108,11 @@ object_reserve(struct reservation_object *obj, bool intr, bool no_wait,
 	wake_up_all(&obj->event_queue);
 
 	return 0;
+
+fail:
+	if (!no_wait)
+		mutex_release(&obj->dep_map, 1, _RET_IP_);
+	return ret;
 }
 EXPORT_SYMBOL(object_reserve);
 
@@ -105,6 +134,14 @@ void
 object_unreserve(struct reservation_object *obj,
 		 reservation_ticket_t *ticket)
 {
+	mutex_release(&obj->dep_map, 1, _RET_IP_);
+
+	if (!object_is_reserved(obj)) {
+#ifndef CONFIG_DEBUG_LOCKING_API_SELFTESTS
+		WARN_ON(1);
+#endif
+		return;
+	}
 	smp_mb();
 	atomic64_set(&obj->reserved, 0);
 	wake_up_all(&obj->event_queue);

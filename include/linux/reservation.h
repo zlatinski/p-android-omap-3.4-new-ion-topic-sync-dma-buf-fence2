@@ -44,6 +44,10 @@
 #include <linux/fence.h>
 
 extern atomic64_t reservation_counter;
+extern const char reservation_object_name[];
+extern struct lock_class_key reservation_object_class;
+extern const char reservation_ticket_name[];
+extern struct lock_class_key reservation_ticket_class;
 
 struct reservation_object {
 	wait_queue_head_t event_queue;
@@ -53,10 +57,17 @@ struct reservation_object {
 	u32 fence_shared_count;
 	struct fence *fence_excl;
 	struct fence *fence_shared[BUF_MAX_SHARED_FENCE];
+
+#ifdef CONFIG_DEBUG_LOCK_ALLOC
+	struct lockdep_map dep_map;
+#endif
 };
 
 typedef struct reservation_ticket {
 	u64 seqno;
+#ifdef CONFIG_DEBUG_LOCK_ALLOC
+	struct lockdep_map dep_map;
+#endif
 } reservation_ticket_t;
 
 /**
@@ -73,11 +84,13 @@ struct reservation_entry {
 	unsigned long obj_shared;
 };
 
-
 static inline void
 __reservation_object_init(struct reservation_object *obj)
 {
 	init_waitqueue_head(&obj->event_queue);
+
+	lockdep_init_map(&obj->dep_map, reservation_object_name,
+			 &reservation_object_class, 0);
 }
 
 static inline void
@@ -110,6 +123,16 @@ reservation_object_fini(struct reservation_object *obj)
 static inline void
 reservation_ticket_init(struct reservation_ticket *t)
 {
+#ifdef CONFIG_LOCKDEP
+	/*
+	 * Make sure we are not reinitializing a held ticket:
+	 */
+
+	debug_check_no_locks_freed((void *)t, sizeof(*t));
+#endif
+	lockdep_init_map(&t->dep_map, reservation_ticket_name,
+			 &reservation_ticket_class, 0);
+	mutex_acquire(&t->dep_map, 0, 0, _RET_IP_);
 	do {
 		t->seqno = atomic64_inc_return(&reservation_counter);
 	} while (unlikely(t->seqno < 2));
@@ -125,7 +148,9 @@ reservation_ticket_init(struct reservation_ticket *t)
  */
 static inline void
 reservation_ticket_fini(struct reservation_ticket *t)
-{ }
+{
+	mutex_release(&t->dep_map, 1, _RET_IP_);
+}
 
 /**
  * reservation_entry_init - initialize and append a reservation_entry
