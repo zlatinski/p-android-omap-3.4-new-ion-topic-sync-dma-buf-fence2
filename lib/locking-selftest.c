@@ -20,6 +20,7 @@
 #include <linux/interrupt.h>
 #include <linux/debug_locks.h>
 #include <linux/irqflags.h>
+#include <linux/reservation.h>
 
 /*
  * Change this to 1 if you want to see the failure printouts:
@@ -42,6 +43,7 @@ __setup("debug_locks_verbose=", setup_debug_locks_verbose);
 #define LOCKTYPE_RWLOCK	0x2
 #define LOCKTYPE_MUTEX	0x4
 #define LOCKTYPE_RWSEM	0x8
+#define LOCKTYPE_RESERVATION 0x10
 
 /*
  * Normal standalone locks, for the circular and irq-context
@@ -920,11 +922,17 @@ GENERATE_PERMUTATIONS_3_EVENTS(irq_read_recursion_soft)
 static void reset_locks(void)
 {
 	local_irq_disable();
+	lockdep_free_key_range(&reservation_object_class, 1);
+	lockdep_free_key_range(&reservation_ticket_class, 1);
+
 	I1(A); I1(B); I1(C); I1(D);
 	I1(X1); I1(X2); I1(Y1); I1(Y2); I1(Z1); I1(Z2);
 	lockdep_reset();
 	I2(A); I2(B); I2(C); I2(D);
 	init_shared_classes();
+
+	memset(&reservation_object_class, 0, sizeof reservation_object_class);
+	memset(&reservation_ticket_class, 0, sizeof reservation_ticket_class);
 	local_irq_enable();
 }
 
@@ -938,7 +946,6 @@ static int unexpected_testcase_failures;
 static void dotest(void (*testcase_fn)(void), int expected, int lockclass_mask)
 {
 	unsigned long saved_preempt_count = preempt_count();
-	int expected_failure = 0;
 
 	WARN_ON(irqs_disabled());
 
@@ -946,26 +953,16 @@ static void dotest(void (*testcase_fn)(void), int expected, int lockclass_mask)
 	/*
 	 * Filter out expected failures:
 	 */
-#ifndef CONFIG_PROVE_LOCKING
-	if ((lockclass_mask & LOCKTYPE_SPIN) && debug_locks != expected)
-		expected_failure = 1;
-	if ((lockclass_mask & LOCKTYPE_RWLOCK) && debug_locks != expected)
-		expected_failure = 1;
-	if ((lockclass_mask & LOCKTYPE_MUTEX) && debug_locks != expected)
-		expected_failure = 1;
-	if ((lockclass_mask & LOCKTYPE_RWSEM) && debug_locks != expected)
-		expected_failure = 1;
-#endif
 	if (debug_locks != expected) {
-		if (expected_failure) {
-			expected_testcase_failures++;
-			printk("failed|");
-		} else {
-			unexpected_testcase_failures++;
+#ifndef CONFIG_PROVE_LOCKING
+		expected_testcase_failures++;
+		printk("failed|");
+#else
+		unexpected_testcase_failures++;
+		printk("FAILED|");
 
-			printk("FAILED|");
-			dump_stack();
-		}
+		dump_stack();
+#endif
 	} else {
 		testcase_successes++;
 		printk("  ok  |");
@@ -1108,6 +1105,322 @@ static inline void print_testname(const char *testname)
 	DO_TESTCASE_6IRW(desc, name, 312);			\
 	DO_TESTCASE_6IRW(desc, name, 321);
 
+static void reservation_test_fail_reserve(void)
+{
+	struct reservation_ticket t;
+	struct reservation_object o;
+
+	reservation_object_init(&o);
+	reservation_ticket_init(&t);
+	t.seqno++;
+
+	object_reserve(&o, false, false, &t);
+	/* No lockdep test, pure API */
+	WARN_ON(object_reserve(&o, false, true, &t) != -EDEADLK);
+	t.seqno--;
+	WARN_ON(object_reserve(&o, false, true, &t) != -EBUSY);
+	t.seqno += 2;
+	WARN_ON(object_reserve(&o, false, true, &t) != -EAGAIN);
+	object_unreserve(&o, NULL);
+
+	reservation_ticket_fini(&t);
+}
+
+static void reservation_test_two_tickets(void)
+{
+	struct reservation_ticket t, t2;
+
+	reservation_ticket_init(&t);
+	reservation_ticket_init(&t2);
+
+	reservation_ticket_fini(&t2);
+	reservation_ticket_fini(&t);
+}
+
+static void reservation_test_ticket_unreserve_twice(void)
+{
+	struct reservation_ticket t;
+
+	reservation_ticket_init(&t);
+	reservation_ticket_fini(&t);
+	reservation_ticket_fini(&t);
+}
+
+static void reservation_test_object_unreserve_twice(void)
+{
+	struct reservation_object o;
+
+	reservation_object_init(&o);
+	object_reserve(&o, false, false, NULL);
+	object_unreserve(&o, NULL);
+	object_unreserve(&o, NULL);
+}
+
+static void reservation_test_fence_nest_unreserved(void)
+{
+	struct reservation_object o;
+
+	reservation_object_init(&o);
+
+	spin_lock_nest_lock(&lock_A, &o);
+	spin_unlock(&lock_A);
+}
+
+static void reservation_test_ticket_block(void)
+{
+	struct reservation_ticket t;
+	struct reservation_object o, o2;
+
+	reservation_object_init(&o);
+	reservation_object_init(&o2);
+	reservation_ticket_init(&t);
+
+	object_reserve(&o, false, false, &t);
+	object_reserve(&o2, false, false, NULL);
+	object_unreserve(&o2, NULL);
+	object_unreserve(&o, &t);
+
+	reservation_ticket_fini(&t);
+}
+
+static void reservation_test_ticket_try(void)
+{
+	struct reservation_ticket t;
+	struct reservation_object o, o2;
+
+	reservation_object_init(&o);
+	reservation_object_init(&o2);
+	reservation_ticket_init(&t);
+
+	object_reserve(&o, false, false, &t);
+	object_reserve(&o2, false, true, NULL);
+	object_unreserve(&o2, NULL);
+	object_unreserve(&o, &t);
+
+	reservation_ticket_fini(&t);
+}
+
+static void reservation_test_ticket_ticket(void)
+{
+	struct reservation_ticket t;
+	struct reservation_object o, o2;
+
+	reservation_object_init(&o);
+	reservation_object_init(&o2);
+	reservation_ticket_init(&t);
+
+	object_reserve(&o, false, false, &t);
+	object_reserve(&o2, false, false, &t);
+	object_unreserve(&o2, &t);
+	object_unreserve(&o, &t);
+
+	reservation_ticket_fini(&t);
+}
+
+static void reservation_test_try_block(void)
+{
+	struct reservation_object o, o2;
+
+	reservation_object_init(&o);
+	reservation_object_init(&o2);
+
+	object_reserve(&o, false, true, NULL);
+	object_reserve(&o2, false, false, NULL);
+	object_unreserve(&o2, NULL);
+	object_unreserve(&o, NULL);
+}
+
+static void reservation_test_try_try(void)
+{
+	struct reservation_object o, o2;
+
+	reservation_object_init(&o);
+	reservation_object_init(&o2);
+
+	object_reserve(&o, false, true, NULL);
+	object_reserve(&o2, false, true, NULL);
+	object_unreserve(&o2, NULL);
+	object_unreserve(&o, NULL);
+}
+
+static void reservation_test_try_ticket(void)
+{
+	struct reservation_ticket t;
+	struct reservation_object o, o2;
+
+	reservation_object_init(&o);
+	reservation_object_init(&o2);
+
+	object_reserve(&o, false, true, NULL);
+	reservation_ticket_init(&t);
+
+	object_reserve(&o2, false, false, &t);
+	object_unreserve(&o2, &t);
+	object_unreserve(&o, NULL);
+
+	reservation_ticket_fini(&t);
+}
+
+static void reservation_test_block_block(void)
+{
+	struct reservation_object o, o2;
+
+	reservation_object_init(&o);
+	reservation_object_init(&o2);
+
+	object_reserve(&o, false, false, NULL);
+	object_reserve(&o2, false, false, NULL);
+	object_unreserve(&o2, NULL);
+	object_unreserve(&o, NULL);
+}
+
+static void reservation_test_block_try(void)
+{
+	struct reservation_object o, o2;
+
+	reservation_object_init(&o);
+	reservation_object_init(&o2);
+
+	object_reserve(&o, false, false, NULL);
+	object_reserve(&o2, false, true, NULL);
+	object_unreserve(&o2, NULL);
+	object_unreserve(&o, NULL);
+}
+
+static void reservation_test_block_ticket(void)
+{
+	struct reservation_ticket t;
+	struct reservation_object o, o2;
+
+	reservation_object_init(&o);
+	reservation_object_init(&o2);
+
+	object_reserve(&o, false, false, NULL);
+	reservation_ticket_init(&t);
+
+	object_reserve(&o2, false, false, &t);
+	object_unreserve(&o2, &t);
+	object_unreserve(&o, NULL);
+
+	reservation_ticket_fini(&t);
+}
+
+static void reservation_test_fence_block(void)
+{
+	struct reservation_object o;
+
+	reservation_object_init(&o);
+	spin_lock(&lock_A);
+	spin_unlock(&lock_A);
+
+	object_reserve(&o, false, false, NULL);
+	spin_lock(&lock_A);
+	spin_unlock(&lock_A);
+	object_unreserve(&o, NULL);
+
+	spin_lock(&lock_A);
+	object_reserve(&o, false, false, NULL);
+	object_unreserve(&o, NULL);
+	spin_unlock(&lock_A);
+}
+
+static void reservation_test_fence_try(void)
+{
+	struct reservation_object o;
+
+	reservation_object_init(&o);
+	spin_lock(&lock_A);
+	spin_unlock(&lock_A);
+
+	object_reserve(&o, false, true, NULL);
+	spin_lock(&lock_A);
+	spin_unlock(&lock_A);
+	object_unreserve(&o, NULL);
+
+	spin_lock(&lock_A);
+	object_reserve(&o, false, true, NULL);
+	object_unreserve(&o, NULL);
+	spin_unlock(&lock_A);
+}
+
+static void reservation_test_fence_ticket(void)
+{
+	struct reservation_ticket t;
+	struct reservation_object o;
+
+	reservation_object_init(&o);
+	spin_lock(&lock_A);
+	spin_unlock(&lock_A);
+
+	reservation_ticket_init(&t);
+
+	object_reserve(&o, false, false, &t);
+	spin_lock(&lock_A);
+	spin_unlock(&lock_A);
+	object_unreserve(&o, &t);
+
+	spin_lock(&lock_A);
+	object_reserve(&o, false, false, &t);
+	object_unreserve(&o, &t);
+	spin_unlock(&lock_A);
+
+	reservation_ticket_fini(&t);
+}
+
+static void reservation_tests(void)
+{
+	printk("  --------------------------------------------------------------------------\n");
+	printk("  | Reservation tests |\n");
+	printk("  ---------------------\n");
+
+	print_testname("reservation api failures");
+	dotest(reservation_test_fail_reserve, SUCCESS, LOCKTYPE_RESERVATION);
+	printk("\n");
+
+	print_testname("reserving two tickets");
+	dotest(reservation_test_two_tickets, FAILURE, LOCKTYPE_RESERVATION);
+	printk("\n");
+
+	print_testname("unreserve ticket twice");
+	dotest(reservation_test_ticket_unreserve_twice, FAILURE, LOCKTYPE_RESERVATION);
+	printk("\n");
+
+	print_testname("unreserve object twice");
+	dotest(reservation_test_object_unreserve_twice, FAILURE, LOCKTYPE_RESERVATION);
+	printk("\n");
+
+	print_testname("spinlock nest unreserved");
+	dotest(reservation_test_fence_nest_unreserved, FAILURE, LOCKTYPE_RESERVATION);
+	printk("\n");
+
+	printk("  -----------------------------------------------------\n");
+	printk("                                 |block | try  |ticket|\n");
+	printk("  -----------------------------------------------------\n");
+
+	print_testname("ticket");
+	dotest(reservation_test_ticket_block, FAILURE, LOCKTYPE_RESERVATION);
+	dotest(reservation_test_ticket_try, SUCCESS, LOCKTYPE_RESERVATION);
+	dotest(reservation_test_ticket_ticket, SUCCESS, LOCKTYPE_RESERVATION);
+	printk("\n");
+
+	print_testname("try");
+	dotest(reservation_test_try_block, FAILURE, LOCKTYPE_RESERVATION);
+	dotest(reservation_test_try_try, SUCCESS, LOCKTYPE_RESERVATION);
+	dotest(reservation_test_try_ticket, FAILURE, LOCKTYPE_RESERVATION);
+	printk("\n");
+
+	print_testname("block");
+	dotest(reservation_test_block_block, FAILURE, LOCKTYPE_RESERVATION);
+	dotest(reservation_test_block_try, SUCCESS, LOCKTYPE_RESERVATION);
+	dotest(reservation_test_block_ticket, FAILURE, LOCKTYPE_RESERVATION);
+	printk("\n");
+
+	print_testname("spinlock");
+	dotest(reservation_test_fence_block, FAILURE, LOCKTYPE_RESERVATION);
+	dotest(reservation_test_fence_try, SUCCESS, LOCKTYPE_RESERVATION);
+	dotest(reservation_test_fence_ticket, FAILURE, LOCKTYPE_RESERVATION);
+	printk("\n");
+}
 
 void locking_selftest(void)
 {
@@ -1187,6 +1500,8 @@ void locking_selftest(void)
 
 	DO_TESTCASE_6x2("irq read-recursion", irq_read_recursion);
 //	DO_TESTCASE_6x2B("irq read-recursion #2", irq_read_recursion2);
+
+	reservation_tests();
 
 	if (unexpected_testcase_failures) {
 		printk("-----------------------------------------------------------------\n");
