@@ -38,13 +38,6 @@
 #include <linux/remoteproc.h>
 #include <linux/fdtable.h>
 
-#ifdef CONFIG_ION_OMAP
-#include <linux/ion.h>
-#include <linux/omap_ion.h>
-
-extern struct ion_device *omap_ion_device;
-#endif
-
 #ifdef CONFIG_DMA_SHARED_BUFFER
 #include <linux/dma-buf.h>
 #endif
@@ -68,9 +61,6 @@ struct rpmsg_omx_service {
 	struct list_head list;
 	struct mutex lock;
 	struct completion comp;
-#ifdef CONFIG_ION_OMAP
-	struct ion_client *ion_client;
-#endif
 };
 
 struct rpmsg_omx_instance {
@@ -83,9 +73,6 @@ struct rpmsg_omx_instance {
 	struct rpmsg_endpoint *ept;
 	u32 dst;
 	int state;
-#ifdef CONFIG_ION_OMAP
-	struct ion_client *ion_client;
-#endif
 #ifdef CONFIG_DMA_SHARED_BUFFER
 	struct idr dma_idr;
 #endif
@@ -260,15 +247,6 @@ static int _rpmsg_omx_buffer_get(struct rpmsg_omx_instance *omx,
 	int ret = -EIO;
 	phys_addr_t pa;
 
-#ifdef CONFIG_ION_OMAP
-	{
-		struct ion_handle *handle;
-		size_t unused;
-
-		handle = (struct ion_handle *)buffer;
-		ret = ion_phys(omx->ion_client, handle, (void *)&pa, &unused);
-	}
-#endif
 #ifdef CONFIG_DMA_SHARED_BUFFER
 	{
 		int fd = buffer;
@@ -456,92 +434,6 @@ long rpmsg_omx_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		buf[sizeof(buf) - 1] = '\0';
 		ret = rpmsg_omx_connect(omx, buf);
 		break;
-#ifdef CONFIG_ION_OMAP
-	case OMX_IOCIONREGISTER:
-	{
-		struct ion_fd_data data;
-
-		if (copy_from_user(&data, (char __user *) arg, sizeof(data))) {
-			dev_err(omxserv->dev,
-				"%s: %d: copy_from_user fail: %d\n", __func__,
-				_IOC_NR(cmd), ret);
-			return -EFAULT;
-		}
-		data.handle = ion_import_fd(omx->ion_client, data.fd);
-		if (IS_ERR_OR_NULL(data.handle))
-			data.handle = NULL;
-		if (copy_to_user((char __user *) arg, &data, sizeof(data))) {
-			dev_err(omxserv->dev,
-				"%s: %d: copy_to_user fail: %d\n", __func__,
-				_IOC_NR(cmd), ret);
-			return -EFAULT;
-		}
-		break;
-	}
-	case OMX_IOCPVRREGISTER:
-	{
-		struct omx_pvr_data data;
-		struct ion_buffer *ion_bufs[2] = { NULL, NULL };
-		int num_handles = 2, i = 0;
-
-		if (copy_from_user(&data, (char __user *)arg, sizeof(data))) {
-			dev_err(omxserv->dev,
-				"%s: %d: copy_from_user fail: %d\n", __func__,
-				_IOC_NR(cmd), ret);
-			return -EFAULT;
-		}
-
-		if (!fcheck(data.fd)) {
-			dev_err(omxserv->dev,
-				"%s: %d: invalid fd: %d\n", __func__,
-				_IOC_NR(cmd), ret);
-			return -EBADF;
-		}
-
-		data.handles[0] = data.handles[1] = NULL;
-		if (!omap_ion_share_fd_to_buffers(data.fd, ion_bufs,
-						  &num_handles)) {
-			unsigned int size = ARRAY_SIZE(data.handles);
-			for (i = 0; (i < num_handles) && (i < size); i++) {
-				struct ion_handle *handle = NULL;
-
-				if (!IS_ERR_OR_NULL(ion_bufs[i]))
-					handle = ion_import(omx->ion_client,
-							   ion_bufs[i]);
-				if (!IS_ERR_OR_NULL(handle))
-					data.handles[i] = handle;
-			}
-		}
-		data.num_handles = i;
-
-		if (copy_to_user((char __user *)arg, &data, sizeof(data))) {
-			dev_err(omxserv->dev,
-				"%s: %d: copy_to_user fail: %d\n", __func__,
-				_IOC_NR(cmd), ret);
-			return -EFAULT;
-		}
-		break;
-	}
-	case OMX_IOCIONUNREGISTER:
-	{
-		struct ion_fd_data data;
-
-		if (copy_from_user(&data, (char __user *) arg, sizeof(data))) {
-			dev_err(omxserv->dev,
-				"%s: %d: copy_from_user fail: %d\n", __func__,
-				_IOC_NR(cmd), ret);
-			return -EFAULT;
-		}
-		ion_free(omx->ion_client, data.handle);
-		if (copy_to_user((char __user *) arg, &data, sizeof(data))) {
-			dev_err(omxserv->dev,
-				"%s: %d: copy_to_user fail: %d\n", __func__,
-				_IOC_NR(cmd), ret);
-			return -EFAULT;
-		}
-		break;
-	}
-#endif
 #ifdef CONFIG_DMA_SHARED_BUFFER
 	case OMX_IOCBUFREGISTER:
 		ret = rpmsg_omx_pin_buffer(omx, (int)arg);
@@ -607,12 +499,6 @@ static int rpmsg_omx_open(struct inode *inode, struct file *filp)
 	list_add(&omx->next, &omxserv->list);
 	mutex_unlock(&omxserv->lock);
 
-#ifdef CONFIG_ION_OMAP
-	omx->ion_client = ion_client_create(omap_ion_device,
-					    (1 << ION_HEAP_TYPE_CARVEOUT) |
-					    (1 << OMAP_ION_HEAP_TYPE_TILER),
-					    "rpmsg-omx");
-#endif
 #ifdef CONFIG_DMA_SHARED_BUFFER
 	idr_init(&omx->dma_idr);
 #endif
@@ -675,9 +561,6 @@ static int rpmsg_omx_release(struct inode *inode, struct file *filp)
 			dev_err(omxserv->dev, "rpmsg_send failed: %d\n", ret);
 	}
 
-#ifdef CONFIG_ION_OMAP
-	ion_client_destroy(omx->ion_client);
-#endif
 #ifdef CONFIG_DMA_SHARED_BUFFER
 	idr_for_each(&omx->dma_idr, rpmsg_omx_idr_unpin_buffer, omx);
 	idr_remove_all(&omx->dma_idr);
