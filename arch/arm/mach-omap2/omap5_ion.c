@@ -18,8 +18,14 @@
 #include "omap5_ion.h"
 
 static struct ion_platform_data omap5_ion_data = {
-	.nr = 3,
+	.nr = 4,
 	.heaps = {
+		{
+			.type = ION_HEAP_TYPE_SYSTEM,
+			.id = OMAP_ION_HEAP_SYSTEM,
+			.name = "system_heap",
+			.size = -1,
+		},
 		{
 			.type = ION_HEAP_TYPE_CARVEOUT,
 			.id = OMAP_ION_HEAP_SECURE_INPUT,
