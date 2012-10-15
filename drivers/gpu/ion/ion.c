@@ -345,6 +345,8 @@ struct ion_handle *ion_alloc(struct ion_client *client, size_t len,
 		/* if the caller didn't specify this heap type */
 		if (!((1 << heap->id) & heap_mask))
 			continue;
+		pr_debug("%s: Using heap of type %u and name %s \n", __func__,
+				heap->type, heap->name);
 		buffer = ion_buffer_create(heap, dev, len, align, flags);
 		if (!IS_ERR_OR_NULL(buffer))
 			break;

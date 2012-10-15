@@ -27,6 +27,10 @@
 #include <linux/types.h>
 #include <linux/miscdevice.h>
 
+#undef pr_debug
+#define pr_debug(fmt, ...) \
+	printk(KERN_WARNING pr_fmt(fmt), ##__VA_ARGS__)
+
 /**
  * struct ion_device - the metadata of the ion device node
  * @dev:		the actual misc device
