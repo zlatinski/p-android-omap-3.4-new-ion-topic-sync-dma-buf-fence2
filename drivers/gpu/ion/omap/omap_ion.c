@@ -23,6 +23,7 @@
 #include "../ion_priv.h"
 #include "omap_ion_priv.h"
 #include <linux/module.h>
+#include <video/omap_gfx_buf.h>
 
 struct ion_device *omap_ion_device;
 EXPORT_SYMBOL(omap_ion_device);
@@ -69,6 +70,21 @@ static long omap_ion_ioctl(struct ion_client *client, unsigned int cmd,
 			return ret;
 		if (copy_to_user((void __user *)arg, &data,
 				 sizeof(data)))
+			return -EFAULT;
+		break;
+	}
+	case OMAP_ION_ALLOC_GFX_BUF:
+	{
+		omap_gfx_buf_req_t buf_req;
+		int ret;
+
+		if (copy_from_user(&buf_req, (void __user *)arg, sizeof(buf_req)))
+			return -EFAULT;
+		ret = omap_gfx_buf_create(client, &buf_req);
+		if (ret)
+			return ret;
+		if (copy_to_user((void __user *)arg, &buf_req,
+				 sizeof(buf_req)))
 			return -EFAULT;
 		break;
 	}
@@ -120,6 +136,9 @@ static int omap_ion_probe(struct platform_device *pdev)
 	}
 
 	platform_set_drvdata(pdev, omap_ion_device);
+
+	omap_gfx_buf_mgr_init();
+
 	return 0;
 err:
 	for (i = 0; i < num_heaps; i++) {
@@ -138,6 +157,8 @@ static int omap_ion_remove(struct platform_device *pdev)
 {
 	struct ion_device *idev = platform_get_drvdata(pdev);
 	int i;
+
+	omap_gfx_buf_mgr_shutdown();
 
 	ion_device_destroy(idev);
 	for (i = 0; i < num_heaps; i++)

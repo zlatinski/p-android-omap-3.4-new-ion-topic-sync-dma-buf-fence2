@@ -70,6 +70,7 @@ enum {
 
 enum {
 	OMAP_ION_TILER_ALLOC,
+	OMAP_ION_ALLOC_GFX_BUF,
 };
 
 /**

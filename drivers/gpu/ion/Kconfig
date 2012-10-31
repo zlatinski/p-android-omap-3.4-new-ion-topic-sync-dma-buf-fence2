@@ -19,3 +19,10 @@ config ION_OMAP
 	  This option shall be chosen if ion carveout is required
 	  for OMAP4/5. The corresponding board file shall also have
 	  the ion carveout implementation.
+
+config OMAP_GFX_BUF
+	bool "Enable TI OMAP GFX Shared Buffer"
+	depends on ION_OMAP && DMA_SHARED_BUFFER
+	default y
+	help
+	  Choose this option if you wish to enable the TI OMAP GFX Shared Buffer.
